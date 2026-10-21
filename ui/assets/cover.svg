@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b211d"/>
+      <stop offset="1" stop-color="#143a33"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="360" fill="url(#bg)"/>
+  <g opacity="0.5" stroke="#2c6a5d" stroke-width="1" fill="none">
+    <circle cx="520" cy="60" r="120"/>
+    <circle cx="520" cy="60" r="80"/>
+  </g>
+  <text x="48" y="150" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="600" fill="#eafaf3">OpenCode 额度</text>
+  <text x="48" y="196" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#7fb3a6">5 小时 · 本周 · 本月</text>
+  <g>
+    <rect x="48" y="240" width="420" height="12" rx="6" fill="#1d4a42"/>
+    <rect x="48" y="240" width="97" height="12" rx="6" fill="#5ee0b5"/>
+    <rect x="48" y="272" width="420" height="12" rx="6" fill="#1d4a42"/>
+    <rect x="48" y="272" width="29" height="12" rx="6" fill="#5ee0b5"/>
+  </g>
+</svg>

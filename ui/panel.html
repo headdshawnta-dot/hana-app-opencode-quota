@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCode 额度</title>
+  <link rel="stylesheet" href="./assets/panel.css">
+</head>
+<body>
+  <main>
+    <header class="head">
+      <div class="titles">
+        <h1>额度</h1>
+        <p class="sub" id="sub">正在读取…</p>
+      </div>
+      <button id="refresh" type="button" class="ghost" title="立即刷新">刷新</button>
+    </header>
+
+    <section id="windows" class="windows" aria-live="polite"></section>
+
+    <section id="error" class="error" hidden>
+      <p class="error-title" id="error-title"></p>
+      <p class="error-body" id="error-body"></p>
+      <p class="error-code" id="error-code"></p>
+    </section>
+
+    <footer class="foot">
+      <span id="stamp">—</span>
+    </footer>
+  </main>
+  <script type="module" src="./assets/panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+{
+  "manifestVersion": 2,
+  "id": "opencode-quota",
+  "name": "OpenCode 额度",
+  "version": "0.1.1",
+  "description": "看 OpenCode Go 计划的 5 小时、本周、本月三档额度用量与重置倒计时，不用再登录网页。",
+  "entry": "index.js",
+  "capabilities": [
+    "app/tools.expose-to-model"
+  ],
+  "network": {
+    "allowedHosts": [
+      "opencode.ai"
+    ],
+    "methods": [
+      "GET"
+    ],
+    "defaultTimeoutMs": 15000,
+    "maxResponseBytes": 65536
+  },
+  "contributes": {
+    "settings": {
+      "title": "OpenCode 额度",
+      "schema": {
+        "properties": {
+          "apiKey": {
+            "type": "string",
+            "title": "OpenCode API key",
+            "description": "在 opencode.ai 后台建的 key，只需要额度读取权限。",
+            "default": "",
+            "scope": "global",
+            "sensitive": true
+          },
+          "warnPercent": {
+            "type": "integer",
+            "title": "转黄阈值 (%)",
+            "description": "用量到这个百分比开始提醒。",
+            "default": 70,
+            "scope": "global"
+          },
+          "dangerPercent": {
+            "type": "integer",
+            "title": "转红阈值 (%)",
+            "description": "用量到这个百分比算危险。",
+            "default": 90,
+            "scope": "global"
+          }
+        }
+      }
+    },
+    "cards": [
+      {
+        "id": "panel",
+        "title": "OpenCode 额度",
+        "description": "三档额度的进度条与重置倒计时。",
+        "route": "/panel.html",
+        "face": {
+          "image": "assets/cover.svg"
+        }
+      }
+    ],
+    "ui": {
+      "messageActions": [
+        {
+          "id": "quota",
+          "title": "查额度",
+          "messages": "assistant",
+          "toolName": "opencode_quota"
+        }
+      ]
+    }
+  },
+  "icon": "assets/icon.svg",
+  "minAppVersion": "1.1.35-beta"
+}
