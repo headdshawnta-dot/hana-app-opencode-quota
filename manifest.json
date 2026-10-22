@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "opencode-quota",
   "name": "OpenCode 额度",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "看 OpenCode Go 计划的 5 小时、本周、本月三档额度用量与重置倒计时，不用再登录网页。",
   "entry": "index.js",
   "capabilities": [

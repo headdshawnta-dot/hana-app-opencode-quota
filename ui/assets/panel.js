@@ -25,6 +25,7 @@ const TITLES = {
   ENDPOINT_MOVED: '接口搬家了',
   RATE_LIMITED: '请求太频繁',
   NETWORK: '网络没通',
+  SURFACE_EXPIRED: '卡片会话过期了',
   BAD_PAYLOAD: '返回格式变了',
   EMPTY_PAYLOAD: '返回里没有数据',
 };
@@ -135,6 +136,18 @@ async function load() {
   try {
     const res = await hana.api.fetch('/quota', { headers: { Accept: 'application/json' } });
     if (!res.ok) {
+      // 403 几乎总是卡片自己的会话过期，而不是后端出错：
+      // 卡片挂久了，宿主发给 iframe 的 surface session 会失效，
+      // 直到这个文档重新 mount 才会换新的。
+      if (res.status === 403) {
+        render({
+          ok: false,
+          code: 'SURFACE_EXPIRED',
+          message: '这张卡片和后台之间的会话过期了（卡片挂太久会出现）。关掉这张卡片重新打开，或者在设置里重载一次应用，就能恢复。',
+          fetchedAt: new Date().toISOString(),
+        });
+        return;
+      }
       render({
         ok: false,
         code: 'HTTP_' + res.status,
