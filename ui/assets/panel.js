@@ -9,7 +9,7 @@ const errorCodeEl = document.getElementById('error-code');
 const stampEl = document.getElementById('stamp');
 const refreshBtn = document.getElementById('refresh');
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 5 * 60_000;
 
 let state = null;
 let ticking = null;
