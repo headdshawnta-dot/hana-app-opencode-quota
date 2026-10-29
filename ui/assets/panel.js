@@ -5,7 +5,7 @@ const sectionsEl = document.getElementById('sections');
 const stampEl = document.getElementById('stamp');
 const refreshBtn = document.getElementById('refresh');
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 5 * 60_000;
 
 const TITLES = {
   NO_KEY: '还没配钥匙',
@@ -70,7 +70,7 @@ function buildRow(win, sectionId) {
   const reset = document.createElement('span');
   reset.className = 'row-reset';
   reset.dataset.reset = `${sectionId}:${win.key}`;
-  reset.textContent = shortCountdown(win.secondsLeft);
+  reset.textContent = win.idle ? '未开始' : shortCountdown(win.secondsLeft);
 
   row.append(label, bar, pct, reset);
   return row;

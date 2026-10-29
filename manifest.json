@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "opencode-quota",
   "name": "OpenCode 额度",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "description": "一页看完 OpenCode Go 和 Command Code 的额度用量与重置倒计时，不用再登录网页。",
   "entry": "index.js",
   "capabilities": [

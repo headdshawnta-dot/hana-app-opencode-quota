@@ -287,20 +287,21 @@ async function fetchCommandCode(sdk, nowMs, warn, danger) {
     const cap = num(entry.cap);
     if (used === null || cap === null || cap <= 0) continue;
     const reset = resetMs(entry.resetAt);
-    // resetAt 为 0 表示这个窗口没有排定的重置点，不能当成 1970 年。
+    // resetAt 为 0 表示这个窗口当前没有任何用量，也就没有可报的重置点。
     const resetIso = reset !== null && reset > 0 ? new Date(reset * 1000).toISOString() : null;
-    windows.push(
-      toWindow(
-        key,
-        CC_LABELS[key],
-        CC_NOTES[key],
-        (used / cap) * 100,
-        resetIso,
-        nowMs,
-        warn,
-        danger,
-      ),
+    const win = toWindow(
+      key,
+      CC_LABELS[key],
+      CC_NOTES[key],
+      (used / cap) * 100,
+      resetIso,
+      nowMs,
+      warn,
+      danger,
     );
+    // 窗口空着：没有重置时间可报，但不代表数据缺失。
+    if (resetIso === null && used === 0) win.idle = true;
+    windows.push(win);
   }
 
   if (windows.length === 0 && !credits && !subscription) {
