@@ -2,15 +2,16 @@
   "manifestVersion": 2,
   "id": "opencode-quota",
   "name": "OpenCode 额度",
-  "version": "0.1.2",
-  "description": "看 OpenCode Go 计划的 5 小时、本周、本月三档额度用量与重置倒计时，不用再登录网页。",
+  "version": "0.2.3",
+  "description": "一页看完 OpenCode Go 和 Command Code 的额度用量与重置倒计时，不用再登录网页。",
   "entry": "index.js",
   "capabilities": [
     "app/tools.expose-to-model"
   ],
   "network": {
     "allowedHosts": [
-      "opencode.ai"
+      "opencode.ai",
+      "api.commandcode.ai"
     ],
     "methods": [
       "GET"
@@ -27,6 +28,14 @@
             "type": "string",
             "title": "OpenCode API key",
             "description": "在 opencode.ai 后台建的 key，只需要额度读取权限。",
+            "default": "",
+            "scope": "global",
+            "sensitive": true
+          },
+          "commandCodeKey": {
+            "type": "string",
+            "title": "Command Code API key",
+            "description": "commandcode.ai 的 key，通常以 user_ 开头。留空则不显示这一段的额度。",
             "default": "",
             "scope": "global",
             "sensitive": true
@@ -52,7 +61,7 @@
       {
         "id": "panel",
         "title": "OpenCode 额度",
-        "description": "三档额度的进度条与重置倒计时。",
+        "description": "OpenCode 与 Command Code 的额度用量，上下排列。",
         "route": "/panel.html",
         "face": {
           "image": "assets/cover.svg"

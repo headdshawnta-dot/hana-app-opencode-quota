@@ -1,135 +1,120 @@
 import { defineApp } from "./sdk/app-contract/server-client.js";
 
-const USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
+const OPENCODE_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
+const CC_API_BASE = "https://api.commandcode.ai";
 
-const WINDOW_LABELS = {
-  rolling: "5 小时",
-  weekly: "本周",
-  monthly: "本月",
-};
-
-const WINDOW_NOTES = {
+const OPENCODE_LABELS = { rolling: "5 小时", weekly: "本周", monthly: "本月" };
+const OPENCODE_NOTES = {
   rolling: "滚动 5 小时窗口，用满会直接卡住",
   weekly: "本周窗口",
   monthly: "月额度，所有窗口的基准",
 };
 
-/** 把 HTTP 状态翻译成人能看懂的原因，别用一句“失败”糊过去。 */
-function describeHttpFailure(status) {
-  if (status === 401) {
-    return {
-      code: "KEY_INVALID",
-      message: "API key 无效或已过期，去 opencode 后台重新建一把填进设置。",
-    };
-  }
-  if (status === 403) {
-    return {
-      code: "NO_SUBSCRIPTION",
-      message: "这把 key 没有 Go 计划的权限，可能是订阅过期，或者 key 属于别的工作区。",
-    };
-  }
-  if (status === 404) {
-    return {
-      code: "ENDPOINT_MOVED",
-      message: "额度接口不见了。opencode 改了路径或下线了它，这个应用需要更新。",
-    };
-  }
-  if (status === 429) {
-    return {
-      code: "RATE_LIMITED",
-      message: "请求太频繁被挡了，等一会儿再试。",
-    };
-  }
-  return {
-    code: "HTTP_" + status,
-    message: "接口报了 " + status + "，不是预期内的错误。",
-  };
-}
+const CC_LABELS = { fiveHour: "5 小时", weekly: "本周" };
+const CC_NOTES = {
+  fiveHour: "滚动 5 小时窗口",
+  weekly: "本周窗口",
+};
 
-function numberOrNull(value) {
+function num(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function normalizeWindows(usage, nowMs, warn, danger) {
-  const windows = [];
-  for (const key of ["rolling", "weekly", "monthly"]) {
-    const raw = usage?.[key];
-    const percent = numberOrNull(raw?.percent);
-    if (percent === null) continue;
-    const resetsAt = typeof raw?.resetsAt === "string" ? raw.resetsAt : null;
-    const resetMs = resetsAt ? Date.parse(resetsAt) : NaN;
-    const secondsLeft = Number.isFinite(resetMs)
-      ? Math.max(0, Math.round((resetMs - nowMs) / 1000))
-      : null;
-    windows.push({
-      key,
-      label: WINDOW_LABELS[key],
-      note: WINDOW_NOTES[key],
-      percent: Math.min(100, Math.max(0, Math.round(percent))),
-      status: typeof raw?.status === "string" ? raw.status : null,
-      resetsAt,
-      secondsLeft,
-      level:
-        percent >= danger ? "danger" : percent >= warn ? "warn" : "ok",
-    });
+function str(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : null;
+}
+
+function resetMs(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value >= 1e12 ? Math.round(value / 1000) : value;
   }
-  return windows;
+  if (typeof value === "string" && value.trim() !== "") {
+    const raw = value.trim();
+    const parsed = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
+    if (Number.isFinite(parsed)) return parsed >= 1e12 ? Math.round(parsed / 1000) : parsed;
+  }
+  return null;
+}
+
+/** 把 key 形状问题挡在发请求之前，别让浏览器抛字节错误。 */
+function keyProblem(raw, label) {
+  const key = typeof raw === "string" ? raw.trim() : "";
+  if (key === "") {
+    return { code: "NO_KEY", message: "还没填 " + label + " 的 key。" };
+  }
+  if (!/^[\x21-\x7e]+$/.test(key)) {
+    const bad = [...key].find((ch) => ch.codePointAt(0) > 0x7e);
+    const where = bad
+      ? "第 " + (key.indexOf(bad) + 1) + " 个字符是「" + bad + "」"
+      : "里面有空格或不可见字符";
+    return {
+      code: "KEY_MALFORMED",
+      message:
+        label + " 的 key 那一栏存的不是一串 key（" + where + "）。整栏清空后重新粘贴纯英文的那一串。",
+    };
+  }
+  if (/^\*+$/.test(key)) {
+    return {
+      code: "KEY_MASKED",
+      message: label + " 的 key 读到的是掩码，真正的值没存进去。重新粘贴一次再保存。",
+    };
+  }
+  return null;
+}
+
+function httpProblem(status, label) {
+  if (status === 401) {
+    return { code: "KEY_INVALID", message: label + " 的 key 无效或已过期。" };
+  }
+  if (status === 403) {
+    return {
+      code: "NO_ACCESS",
+      message: label + " 拒绝了这个 key，可能是订阅过期，或者 key 属于别的工作区。",
+    };
+  }
+  if (status === 404) {
+    return { code: "ENDPOINT_MOVED", message: label + " 的额度接口不见了，需要更新这个应用。" };
+  }
+  if (status === 429) {
+    return { code: "RATE_LIMITED", message: label + " 请求太频繁，等一会儿再试。" };
+  }
+  return { code: "HTTP_" + status, message: label + " 返回了 " + status + "。" };
+}
+
+function toWindow(key, label, note, percent, resetsAt, nowMs, warn, danger) {
+  const reset = resetsAt ? Date.parse(resetsAt) : NaN;
+  return {
+    key,
+    label,
+    note,
+    percent: Math.min(100, Math.max(0, Math.round(percent))),
+    resetsAt,
+    secondsLeft: Number.isFinite(reset) ? Math.max(0, Math.round((reset - nowMs) / 1000)) : null,
+    level: percent >= danger ? "danger" : percent >= warn ? "warn" : "ok",
+  };
 }
 
 async function readLimits(sdk) {
-  const warn = numberOrNull(await sdk.config.get("warnPercent")) ?? 70;
-  const danger = numberOrNull(await sdk.config.get("dangerPercent")) ?? 90;
-  return { warn, danger };
+  return {
+    warn: num(await sdk.config.get("warnPercent")) ?? 70,
+    danger: num(await sdk.config.get("dangerPercent")) ?? 90,
+  };
 }
 
-async function fetchQuota(sdk) {
-  const nowMs = Date.now();
-  const stored = await sdk.config.get("apiKey");
-  const apiKey = typeof stored === "string" ? stored.trim() : "";
-
-  if (apiKey === "") {
-    return {
-      ok: false,
-      code: "NO_KEY",
-      message: "还没填 API key。在应用设置里粘贴一把只能读额度的 key 就能用。",
-      fetchedAt: new Date(nowMs).toISOString(),
-    };
-  }
-
-  // 设置表单什么都吞得下。中文、全角符号、整段笔记都能存进来，
-  // 而一旦混进请求头，浏览器会在联网前就报一个看不懂的字节错误。
-  // 所以在发请求之前先把格式挡住，用能看懂的话说清楚。
-  if (!/^[\x21-\x7e]+$/.test(apiKey)) {
-    const bad = [...apiKey].find((ch) => ch.codePointAt(0) > 0x7e);
-    const where = bad
-      ? "第 " + (apiKey.indexOf(bad) + 1) + " 个字符是「" + bad + "」"
-      : "里面有空格或不可见字符";
-    return {
-      ok: false,
-      code: "KEY_MALFORMED",
-      message:
-        "这一栏里存的不是一把 key（" + where + "，码位 " +
-        (bad ? bad.codePointAt(0) : "?") +
-        "）。大概是从别处粘贴时连带了中文或标点。把整栏清空，重新粘贴纯英文的那一串。",
-      fetchedAt: new Date(nowMs).toISOString(),
-    };
-  }
-
-  if (/^\*+$/.test(apiKey)) {
-    return {
-      ok: false,
-      code: "KEY_MASKED",
-      message: "读到的是设置页的掩码（一串星号），说明真正的值没存进去。重新粘贴一次再保存。",
-      fetchedAt: new Date(nowMs).toISOString(),
-    };
-  }
+async function fetchOpencode(sdk, nowMs, warn, danger) {
+  const problem = keyProblem(await sdk.config.get("apiKey"), "OpenCode");
+  if (problem) return { id: "opencode", title: "OpenCode", ok: false, ...problem };
 
   let response;
   try {
-    response = await sdk.network.fetch(USAGE_URL, {
+    response = await sdk.network.fetch(OPENCODE_USAGE_URL, {
       method: "GET",
       headers: {
-        Authorization: "Bearer " + apiKey,
+        Authorization: "Bearer " + (await sdk.config.get("apiKey")).trim(),
         Accept: "application/json",
       },
       timeoutMs: 15000,
@@ -137,53 +122,236 @@ async function fetchQuota(sdk) {
     });
   } catch (error) {
     return {
+      id: "opencode",
+      title: "OpenCode",
       ok: false,
       code: "NETWORK",
       message: "请求没能发出去：" + (error?.message ?? String(error)),
-      fetchedAt: new Date(nowMs).toISOString(),
     };
   }
 
   if (!response.ok) {
-    return {
-      ok: false,
-      ...describeHttpFailure(response.status),
-      fetchedAt: new Date(nowMs).toISOString(),
-    };
+    return { id: "opencode", title: "OpenCode", ok: false, ...httpProblem(response.status, "OpenCode") };
   }
 
   let payload;
   try {
     payload = await response.json();
-  } catch (error) {
+  } catch {
     return {
+      id: "opencode",
+      title: "OpenCode",
       ok: false,
       code: "BAD_PAYLOAD",
       message: "接口返回的不是 JSON，可能已经改版了。",
-      fetchedAt: new Date(nowMs).toISOString(),
     };
   }
 
-  const { warn, danger } = await readLimits(sdk);
-  const windows = normalizeWindows(payload?.usage, nowMs, warn, danger);
+  const usage = asRecord(payload?.usage);
+  const windows = [];
+  for (const key of ["rolling", "weekly", "monthly"]) {
+    const percent = num(usage?.[key]?.percent);
+    if (percent === null) continue;
+    windows.push(
+      toWindow(
+        key,
+        OPENCODE_LABELS[key],
+        OPENCODE_NOTES[key],
+        percent,
+        str(usage?.[key]?.resetsAt),
+        nowMs,
+        warn,
+        danger,
+      ),
+    );
+  }
 
   if (windows.length === 0) {
     return {
+      id: "opencode",
+      title: "OpenCode",
       ok: false,
       code: "EMPTY_PAYLOAD",
       message: "接口通了，但里面没有用量数据，字段可能被改名了。",
-      fetchedAt: new Date(nowMs).toISOString(),
     };
   }
 
-  const tightest = windows.reduce((a, b) => (b.percent > a.percent ? b : a));
+  return { id: "opencode", title: "OpenCode", ok: true, windows };
+}
+
+async function ccGet(sdk, path) {
+  const response = await sdk.network.fetch(CC_API_BASE + path, {
+    method: "GET",
+    headers: {
+      Authorization: "Bearer " + (await sdk.config.get("commandCodeKey")).trim(),
+      Accept: "application/json",
+    },
+    timeoutMs: 15000,
+    maxResponseBytes: 65536,
+  });
+  if (!response.ok) {
+    const error = new Error("http " + response.status);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+async function fetchCommandCode(sdk, nowMs, warn, danger) {
+  const base = { id: "commandcode", title: "Command Code" };
+  const problem = keyProblem(await sdk.config.get("commandCodeKey"), "Command Code");
+  if (problem) return { ...base, ok: false, ...problem };
+
+  let whoami;
+  try {
+    whoami = await ccGet(sdk, "/alpha/whoami");
+  } catch (error) {
+    if (error?.status) return { ...base, ok: false, ...httpProblem(error.status, "Command Code") };
+    return {
+      ...base,
+      ok: false,
+      code: "NETWORK",
+      message: "请求没能发出去：" + (error?.message ?? String(error)),
+    };
+  }
+
+  const org = asRecord(whoami?.org);
+  const user = asRecord(whoami?.user);
+  const orgId = org ? str(org.id) : null;
+  const account = (org ? str(org.login) : null) ?? (user ? str(user.userName) : null);
+  // 用 URLSearchParams 拼参数：org 为 null 时不能把 &since 直接接在路径后面。
+  const query = (extra) => {
+    const params = new URLSearchParams();
+    if (orgId) params.set("orgId", orgId);
+    for (const [key, value] of Object.entries(extra ?? {})) {
+      if (value) params.set(key, value);
+    }
+    const text = params.toString();
+    return text ? "?" + text : "";
+  };
+
+  // 余额和套餐各自可能拿不到，缺一块不该让整段变红。
+  let credits = null;
+  let subscription = null;
+  let summary = null;
+  let ccWindowsRaw = null;
+  try {
+    const raw = await ccGet(sdk, "/alpha/billing/credits" + query());
+    const c = asRecord(raw?.credits);
+    if (c) {
+      const monthly = num(c.monthlyCredits) ?? 0;
+      const purchased = num(c.purchasedCredits) ?? 0;
+      const free = num(c.freeCredits) ?? 0;
+      credits = { remaining: monthly + purchased + free, monthly, purchased, free };
+    }
+    const limits = asRecord(raw?.windowLimits);
+    if (limits) ccWindowsRaw = limits;
+  } catch {
+    credits = null;
+  }
+
+  try {
+    const raw = await ccGet(sdk, "/alpha/billing/subscriptions" + query());
+    const data = asRecord(raw?.data);
+    if (data) {
+      subscription = {
+        plan: str(data.planId),
+        status: str(data.status),
+        periodStart: str(data.currentPeriodStart),
+        periodEnd: str(data.currentPeriodEnd),
+      };
+    }
+  } catch {
+    subscription = null;
+  }
+
+  // 月度额度不是第三个窗口，而是「已用金额 ÷ (已用 + 剩余)」算出来的池子。
+  try {
+    const raw = await ccGet(
+      sdk,
+      "/alpha/usage/summary" + query({ since: subscription?.periodStart }),
+    );
+    const cost = num(raw?.totalCost);
+    if (cost !== null) {
+      summary = { totalCost: cost, totalCount: num(raw?.totalCount) };
+    }
+  } catch {
+    summary = null;
+  }
+
+  const windows = [];
+  for (const key of ["fiveHour", "weekly"]) {
+    const entry = asRecord(ccWindowsRaw?.[key]);
+    if (!entry) continue;
+    const used = num(entry.used);
+    const cap = num(entry.cap);
+    if (used === null || cap === null || cap <= 0) continue;
+    const reset = resetMs(entry.resetAt);
+    // resetAt 为 0 表示这个窗口没有排定的重置点，不能当成 1970 年。
+    const resetIso = reset !== null && reset > 0 ? new Date(reset * 1000).toISOString() : null;
+    windows.push(
+      toWindow(
+        key,
+        CC_LABELS[key],
+        CC_NOTES[key],
+        (used / cap) * 100,
+        resetIso,
+        nowMs,
+        warn,
+        danger,
+      ),
+    );
+  }
+
+  if (windows.length === 0 && !credits && !subscription) {
+    return {
+      ...base,
+      ok: false,
+      code: "EMPTY_PAYLOAD",
+      message: "接口通了，但既没有窗口用量也没有余额，字段可能被改名了。",
+    };
+  }
+
+  // 月度那一行：已用 / (已用 + 剩余)，重置时间取订阅周期结束。
+  if (credits && summary && summary.totalCost >= 0) {
+    const spent = summary.totalCost;
+    const pool = credits.remaining + spent;
+    if (pool > 0) {
+      credits.spent = spent;
+      credits.pool = pool;
+      windows.push(
+        toWindow(
+          "monthly",
+          "本月",
+          "已用金额占本月额度池的比例",
+          (spent / pool) * 100,
+          subscription?.periodEnd ?? null,
+          nowMs,
+          warn,
+          danger,
+        ),
+      );
+    }
+  }
 
   return {
+    ...base,
     ok: true,
+    account,
     windows,
-    tightest: { key: tightest.key, label: tightest.label, percent: tightest.percent },
-    fetchedAt: new Date(nowMs).toISOString(),
+    credits,
+    subscription,
+    partial: windows.length === 0,
   };
+}
+
+async function fetchAll(sdk) {
+  const nowMs = Date.now();
+  const { warn, danger } = await readLimits(sdk);
+  const sections = [];
+  sections.push(await fetchOpencode(sdk, nowMs, warn, danger));
+  sections.push(await fetchCommandCode(sdk, nowMs, warn, danger));
+  return { ok: true, sections, fetchedAt: new Date(nowMs).toISOString() };
 }
 
 function formatDuration(seconds) {
@@ -197,22 +365,32 @@ function formatDuration(seconds) {
   return minutes + " 分钟";
 }
 
-function toText(result) {
-  if (!result.ok) {
-    return "查不到额度：" + result.message + "（" + result.code + "）";
+function sectionText(section) {
+  if (!section.ok) return section.title + "：查不到，" + section.message;
+  const parts = [];
+  if (section.windows.length > 0) {
+    parts.push(
+      section.windows
+        .map((w) => {
+          const left =
+            w.secondsLeft === null
+              ? ""
+              : w.secondsLeft <= 0
+                ? "，即将重置"
+                : "，" + formatDuration(w.secondsLeft) + "后重置";
+          return w.label + " " + w.percent + "%" + left;
+        })
+        .join("；"),
+    );
   }
-  const lines = result.windows.map((w) => {
-    const left = w.secondsLeft === null ? "" : "，" + formatDuration(w.secondsLeft) + "后重置";
-    return w.label + "已用 " + w.percent + "%" + left;
-  });
-  const tight = result.tightest;
-  const advice =
-    tight.percent >= 90
-      ? "最紧的是" + tight.label + "窗口，已经压到 " + tight.percent + "%，再开大任务容易撞断。"
-      : tight.percent >= 70
-        ? "最紧的是" + tight.label + "窗口，" + tight.percent + "%，悠着点。"
-        : "三个窗口都宽松，最紧的" + tight.label + "才 " + tight.percent + "%。";
-  return lines.join("；") + "。" + advice;
+  if (section.credits) {
+    const c = section.credits;
+    parts.push(
+      c.pool ? "余额 $" + c.remaining.toFixed(2) + " / $" + c.pool.toFixed(2) : "余额 $" + c.remaining.toFixed(2),
+    );
+  }
+  if (section.subscription?.plan) parts.push("套餐 " + section.subscription.plan);
+  return section.title + "：" + parts.join("，");
 }
 
 export const name = "opencode-quota";
@@ -221,24 +399,19 @@ export default defineApp(async (sdk) => {
   await sdk.logger.info("opencode-quota loaded");
 
   await sdk.routes.register((app) => {
-    app.get("/quota", async (c) => {
-      const result = await fetchQuota(sdk);
-      return c.json(result);
-    });
+    app.get("/quota", async (c) => c.json(await fetchAll(sdk)));
   });
 
   await sdk.tools.register({
     name: "opencode_quota",
     description:
-      "查询 OpenCode Go 计划的额度用量：5 小时滚动窗口、本周、本月三个窗口各自的已用百分比与重置倒计时。在跑长任务或大上下文之前调用它，可以判断该不该换个便宜的模型。",
+      "查询 AI 编码服务的额度用量：OpenCode Go 的 5 小时 / 本周 / 本月三档窗口，以及 Command Code 的 5 小时 / 本周窗口、剩余额度和当前套餐，各自带重置倒计时。在跑长任务或大上下文之前调用它，可以判断该不该换个便宜的模型。",
     parameters: { type: "object", properties: {} },
     sessionPermission: { readOnly: true },
     execute: async () => {
-      const result = await fetchQuota(sdk);
-      return {
-        content: [{ type: "text", text: toText(result) }],
-        metadata: result,
-      };
+      const result = await fetchAll(sdk);
+      const text = result.sections.map(sectionText).join("\n");
+      return { content: [{ type: "text", text }], metadata: result };
     },
   });
 });
