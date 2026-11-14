@@ -1,9 +1,9 @@
 {
   "manifestVersion": 2,
   "id": "opencode-quota",
-  "name": "OpenCode 额度",
-  "version": "0.2.5",
-  "description": "一页看完 OpenCode Go 和 Command Code 的额度用量与重置倒计时，不用再登录网页。",
+  "name": "API 额度",
+  "version": "0.2.6",
+  "description": "一页看清 OpenCode Go 与 Command Code 两家 AI 编码服务的额度用量、重置倒计时和剩余余额，不用再逐个登录网页控制台。",
   "entry": "index.js",
   "capabilities": [
     "app/tools.expose-to-model"
@@ -21,7 +21,7 @@
   },
   "contributes": {
     "settings": {
-      "title": "OpenCode 额度",
+      "title": "API 额度",
       "schema": {
         "properties": {
           "apiKey": {
@@ -60,8 +60,8 @@
     "cards": [
       {
         "id": "panel",
-        "title": "OpenCode 额度",
-        "description": "OpenCode 与 Command Code 的额度用量，上下排列。",
+        "title": "API 额度",
+        "description": "OpenCode Go 在上，Command Code 在下，各窗口用量与重置倒计时并排列出。",
         "route": "/panel.html",
         "face": {
           "image": "assets/cover.svg"
@@ -74,7 +74,7 @@
           "id": "quota",
           "title": "查额度",
           "messages": "assistant",
-          "toolName": "opencode_quota"
+          "toolName": "api_quota"
         }
       ]
     }

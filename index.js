@@ -404,9 +404,9 @@ export default defineApp(async (sdk) => {
   });
 
   await sdk.tools.register({
-    name: "opencode_quota",
+    name: "api_quota",
     description:
-      "查询 AI 编码服务的额度用量：OpenCode Go 的 5 小时 / 本周 / 本月三档窗口，以及 Command Code 的 5 小时 / 本周窗口、剩余额度和当前套餐，各自带重置倒计时。在跑长任务或大上下文之前调用它，可以判断该不该换个便宜的模型。",
+      "查询 AI 编码服务的额度用量：OpenCode Go 的 5 小时 / 本周 / 本月三档窗口，以及 Command Code 的 5 小时 / 本周窗口、剩余余额和当前套餐，各自带重置倒计时。两家服务都查，哪家没配 key 就跳过哪家。在跑长任务或大上下文之前调用它，可以判断该不该换个便宜的模型。",
     parameters: { type: "object", properties: {} },
     sessionPermission: { readOnly: true },
     execute: async () => {

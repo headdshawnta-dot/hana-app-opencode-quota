@@ -10,8 +10,8 @@
     <circle cx="520" cy="60" r="120"/>
     <circle cx="520" cy="60" r="80"/>
   </g>
-  <text x="48" y="150" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="600" fill="#eafaf3">OpenCode 额度</text>
-  <text x="48" y="196" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#7fb3a6">5 小时 · 本周 · 本月</text>
+  <text x="48" y="150" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="600" fill="#eafaf3">API 额度</text>
+  <text x="48" y="196" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#7fb3a6">OpenCode Go · Command Code</text>
   <g>
     <rect x="48" y="240" width="420" height="12" rx="6" fill="#1d4a42"/>
     <rect x="48" y="240" width="97" height="12" rx="6" fill="#5ee0b5"/>
