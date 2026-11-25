@@ -394,13 +394,342 @@ function sectionText(section) {
   return section.title + "：" + parts.join("，");
 }
 
+// ---------- 输出速度计 ----------
+//
+// 两条数据路：message_update 的文本增量，实时但只有字符数；llm_usage 的账目，
+// 精确但请求结束才到。字符按中英分别折算成 token，折算系数再用真实用量回校，
+// 所以中文英文混排也不会一直偏。
+
+const SPEED_WINDOW_MS = 2000;
+const SPEED_IDLE_MS = 1200;
+const SPEED_PILL_MS = 900;
+const SPEED_KEEP_MS = 60000;
+
+/** 中文（含日韩汉字）算一个 token，西文按 3.6 字符一个 token 折。 */
+export function estimateTokens(text) {
+  let tok = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    if (
+      (cp >= 0x3040 && cp <= 0x30ff) ||
+      (cp >= 0x3400 && cp <= 0x9fff) ||
+      (cp >= 0xac00 && cp <= 0xd7af) ||
+      (cp >= 0xf900 && cp <= 0xfaff)
+    ) {
+      tok += 1;
+    } else {
+      tok += 1 / 3.6;
+    }
+  }
+  return tok;
+}
+
+export function createSpeedMeter(sdk) {
+  const meters = new Map();
+  const idCache = new Map();
+  const missCache = new Map();
+  const pillByPath = new Map();
+  const lookupErrors = new Map();
+  let calibRatio = 1;
+  let calibSamples = 0;
+  let lastFinished = null;
+  let pillTimer = null;
+  let pillBusy = false;
+  let lastPill = null;
+
+  function latest(now) {
+    let best = null;
+    for (const m of meters.values()) {
+      if (now - m.lastAt > SPEED_KEEP_MS) continue;
+      if (!best || m.lastAt > best.lastAt) best = m;
+    }
+    return best;
+  }
+
+  /** 空了一段时间就把这一段算结束，下一次增量重新从零开计，不跨轮累加。 */
+  function settle(now) {
+    for (const m of meters.values()) {
+      if (m.active && now - m.lastAt > SPEED_IDLE_MS) m.active = false;
+    }
+  }
+
+  function windowSpeed(m, now) {
+    const cutoff = now - SPEED_WINDOW_MS;
+    m.buckets = m.buckets.filter((b) => b.t >= cutoff);
+    if (m.buckets.length === 0) return 0;
+    const from = Math.max(m.startedAt || cutoff, cutoff);
+    const span = Math.max(0.4, (now - from) / 1000);
+    let tok = 0;
+    for (const b of m.buckets) tok += b.tok;
+    return tok / span;
+  }
+
+  function onDelta(path, delta) {
+    const text = typeof delta?.delta === "string" ? delta.delta : "";
+    if (text === "") return;
+    const now = Date.now();
+    let m = meters.get(path);
+    if (!m) {
+      m = {
+        path,
+        sessionId: null,
+        startedAt: 0,
+        lastAt: 0,
+        buckets: [],
+        raw: 0,
+        tokens: 0,
+        active: false,
+        modelId: null,
+        deltas: 0,
+      };
+      meters.set(path, m);
+    }
+    if (!m.active) {
+      m.active = true;
+      m.startedAt = now;
+      m.raw = 0;
+      m.tokens = 0;
+      m.buckets = [];
+    }
+    m.lastAt = now;
+    m.deltas += 1;
+    const base = estimateTokens(text);
+    m.raw += base;
+    const tok = base * calibRatio;
+    m.tokens += tok;
+    m.buckets.push({ t: now, tok });
+    queuePill();
+  }
+
+  function onUsage(entry) {
+    const usage = asRecord(entry?.usage);
+    const out = asRecord(usage?.output);
+    const total = num(out?.totalTokens);
+    if (total === null) return;
+    const ms = num(entry?.durationMs);
+    const sid = str(entry?.attribution?.sessionId);
+    let target = null;
+    if (sid) {
+      for (const m of meters.values()) if (m.sessionId === sid) target = m;
+    }
+    if (!target) {
+      const near = latest(Date.now());
+      if (near && near.raw > 0) target = near;
+    }
+    if (target && target.raw > 0) {
+      const ratio = total / target.raw;
+      if (ratio > 0.25 && ratio < 4) {
+        calibRatio = calibSamples === 0 ? ratio : calibRatio * 0.7 + ratio * 0.3;
+        calibSamples += 1;
+      }
+    }
+    // 账目里的 durationMs 常常是 0，指不上；那就用我们自己看到这段流的起讫时间，
+    // 分子仍然是真实 token，所以这个数依然贴着实测。
+    let usableMs = ms !== null && ms > 200 ? ms : null;
+    if (usableMs === null && target && target.startedAt && target.lastAt > target.startedAt) {
+      const span = target.lastAt - target.startedAt;
+      if (span >= 200) usableMs = span;
+    }
+    const exactTps = usableMs !== null && usableMs > 0 ? total / (usableMs / 1000) : null;
+    lastFinished = {
+      tokens: total,
+      reasoningTokens: num(out?.reasoningTokens),
+      tps: exactTps,
+      ms: usableMs,
+      cacheHitRatio: num(asRecord(usage?.cache)?.hitRatio),
+      modelId: str(entry?.model?.modelId),
+      at: new Date().toISOString(),
+    };
+    queuePill();
+  }
+
+  function snapshot() {
+    const now = Date.now();
+    settle(now);
+    const m = latest(now);
+    const streaming = Boolean(m && now - m.lastAt < SPEED_IDLE_MS);
+    return {
+      ok: true,
+      streaming,
+      tps: streaming && m ? windowSpeed(m, now) : 0,
+      tokens: streaming && m ? Math.round(m.tokens) : 0,
+      avgTps: streaming && m && m.startedAt ? m.tokens / Math.max(0.5, (m.lastAt - m.startedAt) / 1000) : null,
+      modelId: m?.modelId ?? null,
+      last: lastFinished,
+      calibration: { ratio: calibRatio, samples: calibSamples },
+      pill: lastPill,
+      seen: seenPaths(now),
+    };
+  }
+
+  function seenPaths(now) {
+    const rows = [];
+    for (const m of meters.values()) {
+      rows.push({
+        path: m.path,
+        deltas: m.deltas,
+        active: m.active,
+        agoMs: now - m.lastAt,
+        sessionId: m.sessionId,
+        lookupError: lookupErrors.get(m.path) ?? null,
+        pill: pillByPath.get(m.path) ?? null,
+      });
+    }
+    rows.sort((a, b) => a.agoMs - b.agoMs);
+    return rows.slice(0, 6);
+  }
+
+  async function sessionIdFor(path) {
+    if (!path) return null;
+    if (idCache.has(path)) return idCache.get(path);
+    const now = Date.now();
+    const miss = missCache.get(path);
+    if (miss && now - miss < 10000) return null;
+
+    let sid = null;
+    // 先按路径直接问。session:list 只看 home 和 app 两类会话，code 模式的会话不在里面，
+    // 而 session:get 是按路径在全部会话里查的。scope 必须显式写 all：
+    // 默认是 own，意思是“这个会话属不属于本应用”，别的 agent 的会话一定不过。
+    try {
+      const res = await sdk.bus.request("session:get", { sessionPath: path, scope: "all" });
+      sid = str(res?.session?.sessionId);
+      if (!sid) lookupErrors.set(path, "session:get 返回里没有 sessionId");
+    } catch (error) {
+      lookupErrors.set(path, "session:get: " + (error?.message ?? String(error)));
+    }
+    if (!sid) {
+      for (const scope of ["all", "own"]) {
+        try {
+          const res = await sdk.bus.request("session:list", { scope, lifecycle: "all" });
+          const list = Array.isArray(res?.sessions) ? res.sessions : [];
+          const hit = list.find((s) => s?.path === path || s?.sessionPath === path);
+          if (hit?.sessionId) {
+            sid = hit.sessionId;
+            lookupErrors.delete(path);
+            break;
+          }
+          lookupErrors.set(path, "session:list(" + scope + ") 里有 " + list.length + " 条，没匹配上这条路径");
+        } catch (error) {
+          lookupErrors.set(path, "session:list(" + scope + "): " + (error?.message ?? String(error)));
+        }
+      }
+    }
+
+    if (sid) {
+      idCache.set(path, sid);
+      missCache.delete(path);
+    } else {
+      missCache.set(path, now);
+    }
+    return sid;
+  }
+
+  function queuePill() {
+    if (pillTimer) return;
+    pillTimer = setTimeout(() => {
+      pillTimer = null;
+      void pushPill();
+    }, SPEED_PILL_MS);
+  }
+
+  async function pushPill() {
+    if (pillBusy) return;
+    pillBusy = true;
+    try {
+      const snap = snapshot();
+      const target = latest(Date.now());
+      if (!target) return;
+      const sid = await sessionIdFor(target.path);
+      if (!sid) {
+        lastPill = { at: new Date().toISOString(), sessionId: null, error: "没找到这个会话的 id" };
+        pillByPath.set(target.path, lastPill);
+        return;
+      }
+      if (target.sessionId !== sid) target.sessionId = sid;
+      const tps = snap.streaming
+        ? Math.round(snap.tps)
+        : snap.last && snap.last.tps
+          ? Math.round(snap.last.tps)
+          : null;
+      const text = tps !== null && tps > 0 ? String(tps) + " tok/s" : null;
+      const tooltip = snap.streaming
+        ? "本段输出约 " + tps + " tok/s（估算，结束后按真实用量校正）"
+        : snap.last && snap.last.tps
+          ? "上一段 " + Math.round(snap.last.tps) + " tok/s · " + snap.last.tokens + " tok"
+          : "还没测到速度";
+      if (text === null) {
+        // 没数就把这一项收起来，不拿一个横杠占着位置
+        await sdk.inputStatus.set({ sessionId: sid, id: "tps", visible: false });
+        lastPill = { at: new Date().toISOString(), sessionId: sid, text: null, hidden: true, error: null };
+        pillByPath.set(target.path, lastPill);
+        return;
+      }
+      await sdk.inputStatus.set({ sessionId: sid, id: "tps", text, tooltip });
+      lastPill = { at: new Date().toISOString(), sessionId: sid, text, error: null };
+      pillByPath.set(target.path, lastPill);
+    } catch (error) {
+      lastPill = { at: new Date().toISOString(), sessionId: null, error: error?.message ?? String(error) };
+      const t = latest(Date.now());
+      if (t) pillByPath.set(t.path, lastPill);
+      try {
+        await sdk.logger.debug("speed meter: input status unavailable: " + (error?.message ?? String(error)));
+      } catch {
+        // 日志也不通就算了，别让速度计本身抛错
+      }
+    } finally {
+      pillBusy = false;
+    }
+  }
+
+  function handler(event, path) {
+    try {
+      if (!event || typeof event !== "object") return;
+      if (event.type === "message_update") {
+        const inner = event.assistantMessageEvent;
+        if (!inner) return;
+        if (inner.type === "text_delta" || inner.type === "thinking_delta" || inner.type === "toolcall_delta") {
+          const model =
+            str(event?.message?.model?.modelId) ?? str(event?.message?.modelId) ?? str(event?.message?.model);
+          const m = meters.get(path);
+          if (model && m) m.modelId = model;
+          onDelta(path, inner);
+          const after = meters.get(path);
+          if (model && after) after.modelId = model;
+        }
+        return;
+      }
+      if (event.type === "llm_usage") onUsage(event.entry);
+    } catch {
+      // 单条事件出错不该拖垮整条订阅
+    }
+  }
+
+  function attach() {
+    try {
+      sdk.bus.subscribe(handler, { types: ["message_update", "llm_usage"] });
+    } catch {
+      try {
+        sdk.bus.subscribe(handler, { types: ["message_update"] });
+      } catch {
+        // 事件总线不可用就只靠工具和卡片，不报错
+      }
+    }
+  }
+
+  return { attach, snapshot };
+}
+
 export const name = "opencode-quota";
 
 export default defineApp(async (sdk) => {
   await sdk.logger.info("opencode-quota loaded");
 
+  const speed = createSpeedMeter(sdk);
+  speed.attach();
+
   await sdk.routes.register((app) => {
     app.get("/quota", async (c) => c.json(await fetchAll(sdk)));
+    app.get("/speed", (c) => c.json(speed.snapshot()));
   });
 
   await sdk.tools.register({

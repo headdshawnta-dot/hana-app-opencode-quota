@@ -4,8 +4,10 @@ const subEl = document.getElementById('sub');
 const sectionsEl = document.getElementById('sections');
 const stampEl = document.getElementById('stamp');
 const refreshBtn = document.getElementById('refresh');
+const speedEl = document.getElementById('speed');
 
 const REFRESH_MS = 5 * 60_000;
+const SPEED_MS = 1000;
 
 const TITLES = {
   NO_KEY: '还没配钥匙',
@@ -147,6 +149,79 @@ function render(result) {
   startTicking();
 }
 
+function fmtNum(n, digits = 0) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('zh-CN', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function renderSpeed(snap) {
+  if (!snap || !snap.ok) {
+    speedEl.hidden = true;
+    return;
+  }
+  const streaming = Boolean(snap.streaming);
+  const last = snap.last ?? null;
+  if (!streaming && !last) {
+    speedEl.hidden = true;
+    return;
+  }
+  speedEl.hidden = false;
+
+  const head = document.createElement('div');
+  head.className = 'speed-head';
+  const title = document.createElement('span');
+  title.className = 'speed-title';
+  title.textContent = '输出速度';
+  const state = document.createElement('span');
+  state.className = streaming ? 'speed-live on' : 'speed-live';
+  state.textContent = streaming ? '正在生成' : '空闲';
+  head.append(title, state);
+
+  const main = document.createElement('div');
+  main.className = 'speed-main';
+  const num = document.createElement('span');
+  num.className = 'speed-num';
+  const tps = streaming ? snap.tps : last?.tps ?? null;
+  num.textContent = typeof tps === 'number' && tps > 0 ? fmtNum(tps, 1) : '—';
+  const unit = document.createElement('span');
+  unit.className = 'speed-unit';
+  unit.textContent = streaming ? 'tok/s 估算中' : 'tok/s 上一段实测';
+  main.append(num, unit);
+
+  const facts = [];
+  if (streaming) {
+    if (snap.tokens) facts.push(`本次已出 ${fmtNum(snap.tokens)} tok`);
+    if (typeof snap.avgTps === 'number') facts.push(`本段平均 ${fmtNum(snap.avgTps, 1)} tok/s`);
+  } else if (last) {
+    facts.push(`上一段 ${fmtNum(last.tokens)} tok`);
+    if (typeof last.ms === 'number') facts.push(`${fmtNum(last.ms / 1000, 1)} 秒`);
+    if (typeof last.cacheHitRatio === 'number') facts.push(`缓存 ${fmtNum(last.cacheHitRatio * 100)}%`);
+    if (last.modelId) facts.push(last.modelId);
+  }
+  if (snap.calibration?.samples > 0) {
+    facts.push(`估算已按 ${snap.calibration.samples} 次真实用量校准`);
+  }
+
+  const line = document.createElement('p');
+  line.className = 'speed-facts';
+  line.textContent = facts.join(' · ');
+
+  speedEl.replaceChildren(head, main, line);
+}
+
+async function loadSpeed() {
+  try {
+    const res = await hana.api.fetch('/speed', { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    renderSpeed(await res.json());
+  } catch {
+    // 后端还没就绢就跳过这一轮，下次再试
+  }
+}
+
 function startTicking() {
   if (ticking) return;
   ticking = setInterval(() => {
@@ -208,9 +283,16 @@ function schedule() {
 
 refreshBtn.addEventListener('click', load);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') load();
+  if (document.visibilityState === 'visible') {
+    load();
+    loadSpeed();
+  }
 });
 
 await hana.ready();
 await load();
 schedule();
+loadSpeed();
+setInterval(() => {
+  if (document.visibilityState === 'visible') loadSpeed();
+}, SPEED_MS);

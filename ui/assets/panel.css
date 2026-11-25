@@ -174,3 +174,62 @@ main {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* 输出速度 */
+.speed {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.speed[hidden] { display: none; }
+
+.speed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.speed-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.speed-live {
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-live.on { color: var(--ok); }
+
+.speed-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.speed-num {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.speed-unit {
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.speed-facts {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}

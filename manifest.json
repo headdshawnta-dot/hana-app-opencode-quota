@@ -2,11 +2,14 @@
   "manifestVersion": 2,
   "id": "opencode-quota",
   "name": "API 额度",
-  "version": "0.2.6",
-  "description": "一页看清 OpenCode Go 与 Command Code 两家 AI 编码服务的额度用量、重置倒计时和剩余余额，不用再逐个登录网页控制台。",
+  "version": "0.3.4",
+  "description": "一页看清 OpenCode Go 与 Command Code 两家 AI 编码服务的额度用量、重置倒计时和剩余余额，并在额度下面显示当前模型的输出速度。",
   "entry": "index.js",
   "capabilities": [
-    "app/tools.expose-to-model"
+    "app/tools.expose-to-model",
+    "app/usage.read",
+    "app/sessions.read",
+    "app/input.status"
   ],
   "network": {
     "allowedHosts": [
@@ -69,6 +72,14 @@
       }
     ],
     "ui": {
+      "inputStatus": [
+        {
+          "id": "tps",
+          "title": "Token 速度",
+          "text": "—",
+          "tooltip": "当前这段输出的速度。流式中是估算值，请求结束后用真实用量校正。"
+        }
+      ],
       "messageActions": [
         {
           "id": "quota",
